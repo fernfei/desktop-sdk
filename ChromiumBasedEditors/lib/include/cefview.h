@@ -50,6 +50,7 @@ enum class AscEditorType
 	etDocumentMasterForm    = 3,
 	etDocumentMasterOForm   = 4,
 	etPdf                   = 5,
+	etDraw                  = 6,
 	etUndefined             = 255
 };
 
@@ -138,7 +139,9 @@ public:
 
 	bool IsDestroy();
 
-    void SetParentWidgetInfo(const std::wstring& json);
+	void SetParentWidgetInfo(const std::wstring& json);
+
+	int GetRecentId();
 
 protected:
 	int m_nId;
@@ -169,6 +172,7 @@ public:
 
 	void OpenLocalFile(const std::wstring& sFilePath, const int& nFileFormat, const std::wstring& params = L"");
 	void CreateLocalFile(const AscEditorType& nFileFormat, const std::wstring& sName = L"", const std::wstring& sTemplatePath = L"");
+	void CreateLocalFile(const AscEditorType& nFileFormat, const int& nTemplateId, const std::wstring& sName = L"");
 	bool OpenCopyAsRecoverFile(const int& nIdSrc);
 	bool OpenRecoverFile(const int& nId);
 	bool OpenRecentFile(const int& nId);
@@ -176,6 +180,7 @@ public:
 
 	bool CheckCloudCryptoNeedBuild();
 	bool IsBuilding();
+	bool IsSaveLocked();
 
 	std::wstring GetLocalFilePath();
 	std::wstring GetRecoveryDir();

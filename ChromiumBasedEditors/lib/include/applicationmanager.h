@@ -86,6 +86,12 @@ public:
 	bool                            macroses_support;
 	bool                            plugins_support;
 
+	std::wstring                    system_templates_path;
+	std::wstring                    user_templates_path;
+	int                             templates_image_width;
+	int                             templates_image_height;
+	std::wstring                    templates_cache_info_path;
+
 	std::map<std::string, std::string> converter_environments;
 
 public:
@@ -201,7 +207,7 @@ public:
 	void StartKeyboardChecker();
 	void CheckKeyboard();
 	void SendKeyboardAttack();
-	virtual void OnNeedCheckKeyboard();
+	void OnNeedCheckKeyboard();
 	virtual bool IsPlatformKeyboardSupport();
 	virtual int GetPlatformKeyboardLayout();
 
@@ -309,6 +315,8 @@ public:
 	static std::string GetErrorPageAddon(const ErrorPageType& type);
 
 	bool InstallPluginFromStore(const std::wstring& sName);
+
+	bool RemoveRecentByViewId(const int& viewId);
 
 protected:
 	int GenerateNextViewId();

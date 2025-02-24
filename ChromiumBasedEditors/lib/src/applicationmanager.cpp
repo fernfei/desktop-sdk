@@ -35,6 +35,10 @@
 #include "./cefwrapper/client_resource_handler_async.h"
 #include "./cefwrapper/monitor_info.h"
 
+#if defined(_LINUX) && !defined(_MAC)
+# include "keyboardlayout.h"
+#endif
+
 #ifdef LINUX
 CApplicationCEF* CLinuxData::app_cef = NULL;
 CAscApplicationManager* CLinuxData::app_manager = NULL;
@@ -81,6 +85,10 @@ CAscApplicationSettings::CAscApplicationSettings()
 	file_converter_path     = sApplicationPath + L"/converter";
 	recover_path            = app_data_path + L"/data/recover";
 
+	system_templates_path   = file_converter_path + L"/templates";
+	templates_image_width   = 140;
+	templates_image_height  = 200;
+
 	country = "RU";
 
 #ifdef FEATURE_ENABLE_PROTECT
@@ -123,6 +131,8 @@ void CAscApplicationSettings::SetUserDataPath(std::wstring sPath)
 	user_dictionaries_path = app_data_path + L"/data/dictionaries";
 
 	user_plugins_path      = app_data_path + L"/data/sdkjs-plugins";
+
+	templates_cache_info_path = app_data_path + L"/data/templates_cache";
 }
 
 // ---------------------------------------------------------------------------------
@@ -232,6 +242,7 @@ CAscApplicationManager::CAscApplicationManager()
 {
 	m_pInternal = new CAscApplicationManager_Private();
 	m_pInternal->m_pMain = this;
+	m_pInternal->m_oTemplatesCache.SetManager(this);
 	m_pInternal->m_pAdditional = Create_ApplicationManagerAdditional(this);
 	m_pInternal->m_pAdditional->m_arApplyEvents = &m_pInternal->m_arApplyEvents;
 }
@@ -270,7 +281,8 @@ void CAscApplicationManager::StartKeyboardChecker()
 }
 void CAscApplicationManager::OnNeedCheckKeyboard()
 {
-	// none. evaluate in UI thread
+	if (GetEventListener())
+		GetEventListener()->OnEvent(new NSEditorApi::CAscCefMenuEvent(ASC_MENU_EVENT_TYPE_CEF_CHECK_KEYBOARD));
 }
 
 void CAscApplicationManager::CheckKeyboard()
@@ -670,6 +682,8 @@ std::wstring CAscApplicationManager::GetNewFilePath(const AscEditorType& nFileFo
 		sExtension = L"pdf";
 	else if (nFileFormat == AscEditorType::etPdf)
 		sExtension = L"pdf";
+	else if (nFileFormat == AscEditorType::etDraw)
+		sExtension = L"vsdx";
 
 	sFilePath += sExtension;
 	if (!NSFile::CFileBinary::Exists(sFilePath))
@@ -904,6 +918,12 @@ bool CAscApplicationManager::IsPlatformKeyboardSupport()
 #ifdef WIN32
 	return true;
 #endif
+
+#if defined(_LINUX) && !defined(_MAC)
+	KeyboardLayout kl;
+	return kl.IsKeyboardSupport();
+#endif
+
 	return false;
 }
 
@@ -916,6 +936,12 @@ int CAscApplicationManager::GetPlatformKeyboardLayout()
 	int nLang = LOWORD(hkl);
 	return nLang;
 #endif
+
+#if defined(_LINUX) && !defined(_MAC)
+	KeyboardLayout kl;
+	return kl.GetKeyboardLayout();
+#endif
+
 	return -1;
 }
 
@@ -1284,6 +1310,20 @@ bool CAscApplicationManager::InstallPluginFromStore(const std::wstring& sName)
 		pEditor->UpdatePlugins();
 	}
 
+	return true;
+}
+
+bool CAscApplicationManager::RemoveRecentByViewId(const int& nId)
+{
+	CCefView* pView = GetViewById(nId);
+	if (!pView)
+		return false;
+
+	int nRecentId = pView->GetRecentId();
+	if (-1 == nRecentId)
+		return false;
+
+	m_pInternal->Recents_Remove(nRecentId);
 	return true;
 }
 

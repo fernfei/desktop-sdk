@@ -54,39 +54,31 @@ QCefView_Media::~QCefView_Media()
 
 #ifdef _LINUX
 #include <QX11Info>
-QWidget* getMainPanel(QWidget* cur, int& x, int& y)
+QWidget* getMainPanel(QWidget* widget, int& x, int& y)
 {
-    x = 0; y = 0;
-    if (!QX11Info::isCompositingManagerRunning())
-        return cur;
+	x = 0; y = 0;
+	if (!QX11Info::isCompositingManagerRunning())
+		return widget;
 
-    QWidget* pp = cur;
+	QWidget* cur = widget;
+	while (cur->parentWidget() && cur->objectName() != "mainPanel")
+	{
+		if (cur->objectName() == "ascTabWidget")
+		{
+			x += cur->x();
+			y += cur->y();
+		}
+		cur = cur->parentWidget();
+	}
 
-    QString objName = pp->objectName();
-    while (objName != "mainPanel" && pp)
-    {
-        if ("ascTabWidget" == objName)
-        {
-            x += pp->x();
-            y += pp->y();
-        }
-        pp = pp->parentWidget();
-        if (!pp)
-            break;
-        objName = pp->objectName();
-    }
+	// presenter view
+	x += widget->x();
+	y += widget->y();
 
-    // presenter view
-    x += cur->x();
-    y += cur->y();
+	if (cur)
+		return cur;
 
-    if (pp)
-    	return pp;
-
-    if (cur->parentWidget())
-    	return cur->parentWidget();
-
-    return cur;
+	return widget;
 }
 #else
 QWidget* getMainPanel(QWidget* cur, int& x, int& y)
@@ -152,7 +144,7 @@ void QCefView_Media::OnMediaEnd(bool isFromResize)
 void QCefView_Media::OnMediaPlayerCommand(NSEditorApi::CAscExternalMediaPlayerCommand* data)
 {
 	std::string sCmd = data->get_Cmd();
-
+	// panel and video widget commands
 	if (sCmd == "showMediaControl")
 	{
 		showMediaControl(data);
@@ -164,6 +156,23 @@ void QCefView_Media::OnMediaPlayerCommand(NSEditorApi::CAscExternalMediaPlayerCo
 	else if (sCmd == "update")
 	{
 		updateGeometry(data);
+	}
+	// player commands
+	else if (sCmd == "play" || sCmd == "resume")
+	{
+		m_pMediaView->Play();
+	}
+	else if (sCmd == "pause")
+	{
+		m_pMediaView->Pause();
+	}
+	else if (sCmd == "stop")
+	{
+		m_pMediaView->Stop();
+	}
+	else if (sCmd == "togglePause")
+	{
+		m_pMediaView->TogglePause();
 	}
 	else
 	{
@@ -251,8 +260,9 @@ void QCefView_Media::showMediaControl(NSEditorApi::CAscExternalMediaPlayerComman
 	int xOffset = 0, yOffset = 0;
 	m_pMediaView = new QAscVideoView(getMainPanel(this, xOffset, yOffset), true);
 
-	QObject::connect(m_pMediaView, SIGNAL(onKeyDown(int, Qt::KeyboardModifiers)),
-					 this, SLOT(onMediaKeyDown(int, Qt::KeyboardModifiers)));
+	// NOTE: uncomment if you want to handle key events from media player
+	// QObject::connect(m_pMediaView, SIGNAL(onKeyDown(int,Qt::KeyboardModifiers)),
+	// 				 this, SLOT(onMediaKeyDown(int,Qt::KeyboardModifiers)));
 
 	m_pMediaView->setPlayListUsed(false);
 	m_pMediaView->setFullScreenUsed(false);
@@ -289,7 +299,6 @@ void QCefView_Media::hideMediaControl()
 	if (!m_pMediaView)
 		return;
 
-	m_pMediaView->disconnect();
 	m_pMediaView->RemoveFromPresentation();
 	m_pMediaView = nullptr;
 }
@@ -308,15 +317,10 @@ void QCefView_Media::updateGeometry(NSEditorApi::CAscExternalMediaPlayerCommand*
 
 void QCefView_Media::onMediaKeyDown(int key, Qt::KeyboardModifiers mods)
 {
-	switch (key)
-	{
-	case Qt::Key_Escape:
-	{
-		hideMediaControl();
-		setFocus();
-		break;
-	}
-	default:
-		break;
-	}
+	// NOTE: here can be handled some key events while media is playing
+	// switch (key)
+	// {
+	// default:
+	// 	break;
+	// }
 }

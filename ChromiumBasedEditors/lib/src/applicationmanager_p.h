@@ -62,6 +62,7 @@
 
 #include "utils.h"
 #include "../../../../core/DesktopEditor/xmlsec/src/include/CertificateCommon.h"
+#include "templatesmanager.h"
 
 #ifdef CEF_2623
 #define MESSAGE_IN_BROWSER
@@ -316,7 +317,7 @@ namespace NSRequest
 
 			m_request->SetHeaderByName("Accept", "*/*", true);
 			int nHeadersCount = args->GetSize();
-			for (int i = 4; i < nHeadersCount; i += 2)
+			for (int i = 5; i < nHeadersCount; i += 2)
 			{
 				m_request->SetHeaderByName(args->GetString(i), args->GetString(i + 1), true);
 			}
@@ -499,6 +500,11 @@ namespace NSSystem
 		{
 			m_pLocker->Unlock();
 			return true;
+		}
+
+		bool IsEmpty()
+		{
+			return m_pLocker->IsEmpty();
 		}
 
 		~CLocalFileLocker()
@@ -864,6 +870,14 @@ public:
 			isOfficeFileBase = false;
 			this->nFileType = AVS_OFFICESTUDIO_FILE_UNKNOWN;
 		}
+
+#ifdef DISABLE_VSDX
+		if (isOfficeFileBase && this->nFileType & AVS_OFFICESTUDIO_FILE_DRAW)
+		{
+			isOfficeFileBase = false;
+			this->nFileType = AVS_OFFICESTUDIO_FILE_UNKNOWN;
+		}
+#endif
 
 		if (isCheckLocal)
 		{
@@ -1601,6 +1615,9 @@ public:
 	// сброс LD_PRELOAD
 	bool m_bIsPreloadDiscard;
 
+	// генератор шаблонов
+	CTemplatesCache m_oTemplatesCache;
+
 public:
 	IMPLEMENT_REFCOUNTING(CAscApplicationManager_Private);
 
@@ -1716,6 +1733,8 @@ public:
 		Stop();
 		m_oKeyboardTimer.Stop();
 		m_oSpellChecker.End();
+
+		m_oTemplatesCache.Stop();
 	}
 
 	// logout из портала -----------------------------------------------------------------------
@@ -2149,6 +2168,8 @@ public:
 			oAddons.CheckVersion(sEditorsPath);
 		}
 
+		m_oTemplatesCache.Init();
+
 		oWorker.CheckThumbnails();
 
 		m_bRunThread = FALSE;
@@ -2286,6 +2307,20 @@ public:
 		}
 
 		Recents_Dump();
+	}
+	int Recents_GetIdByUrl(const std::wstring& sUrl)
+	{
+		CTemporaryCS oCS(&m_oCS_LocalFiles);
+
+		for (std::vector<CAscEditorFileInfo>::iterator i = m_arRecents.begin(); i != m_arRecents.end(); i++)
+		{
+			if (sUrl == i->m_sUrl)
+			{
+				return i->m_nId;
+			}
+		}
+
+		return -1;
 	}
 	void Recents_RemoveAll()
 	{
@@ -2475,7 +2510,7 @@ public:
 			}
 
 			std::wstring sNameInfo = arDirectories[i] + L"/asc_name.info";
-			if (!NSFile::CFileBinary::Exists(sNameInfo) || nType == -1)
+			if (!NSFile::CFileBinary::Exists(sNameInfo))
 				continue;
 
 			XmlUtils::CXmlNode oNode;
@@ -2719,6 +2754,11 @@ static std::wstring GetFileUrlParams(const int& nFileFormat, const bool& bIsView
 		{
 			sParams += L"&filetype=pdf";
 		}
+	}
+	else if (nFileFormat & AVS_OFFICESTUDIO_FILE_DRAW)
+	{
+		sParams = L"&doctype=diagram";
+		sParams += L"&mode=view";
 	}
 
 	if (bViewer)

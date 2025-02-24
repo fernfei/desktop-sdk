@@ -18,10 +18,11 @@ include($$CORE_ROOT_DIR/Common/base.pri)
 DEFINES += \
     PDFFILE_USE_DYNAMIC_LIBRARY \
     DJVU_USE_DYNAMIC_LIBRARY \
-    XPS_USE_DYNAMIC_LIBRARY \
-    HTMLRENDERER_USE_DYNAMIC_LIBRARY
+	XPS_USE_DYNAMIC_LIBRARY
 
 DEFINES += DESKTOP_USE_DYNAMIC_LIBRARY_BUILDING
+
+DEFINES += DISABLE_VSDX
 
 core_mac:DEFINES += _XCODE
 !core_windows:DEFINES += DOCUMENTSCORE_OPENSSL_SUPPORT
@@ -82,6 +83,8 @@ HEADERS += \
     $$PWD/src/cefwrapper/client_renderer_params.h \
     $$PWD/src/cefwrapper/client_scheme.h \
     $$PWD/src/fileconverter.h \
+	$$PWD/src/x2t.h \
+	$$PWD/src/templatesmanager.h \
     $$PWD/src/cefwrapper/client_resource_handler_async.h
 
 SOURCES += \
@@ -121,15 +124,17 @@ SOURCES += \
 SOURCES += \
     $$CORE_ROOT_DIR/Common/OfficeFileFormatChecker2.cpp \
     $$CORE_ROOT_DIR/Common/3dParty/pole/pole.cpp \
-    $$CORE_ROOT_DIR/OOXML/Base/unicode_util.cpp \
-    $$CORE_ROOT_DIR/HtmlRenderer/src/ASCSVGWriter.cpp
+	$$CORE_ROOT_DIR/OOXML/Base/unicode_util.cpp
 
 # crypto ----------------------------------
 LIBS += -L$$CORE_BUILDS_LIBRARIES_PATH -lCryptoPPLib
 LIBS += -L$$CORE_BUILDS_LIBRARIES_PATH -lCompoundFileLib
 
 DEFINES += CRYPTOPP_DISABLE_ASM
-SOURCES += $$CORE_ROOT_DIR/MsBinaryFile/DocFile/MemoryStream.cpp
+SOURCES += \
+	$$CORE_ROOT_DIR/MsBinaryFile/DocFile/MemoryStream.cpp \
+	$$CORE_ROOT_DIR/MsBinaryFile/XlsFile/Format/Logging/Log.cpp \
+	$$CORE_ROOT_DIR/MsBinaryFile/XlsFile/Format/Logging/Logger.cpp
 # -----------------------------------------
 
 
@@ -150,12 +155,24 @@ core_mac {
         $$PWD/src/mac_application.mm
 
     use_v8:DEFINES += OLD_MACOS_SYSTEM
+
+	DEFINES += NO_SUPPORT_MEDIA_PLAYER
 }
 
 core_linux {
     QMAKE_LFLAGS += "-Wl,-rpath,\'\$$ORIGIN\'"
     QMAKE_LFLAGS += "-Wl,-rpath,\'\$$ORIGIN/converter\'"
     QMAKE_LFLAGS += -Wl,--disable-new-dtags
+
+    include($$CORE_ROOT_DIR/Common/3dParty/icu/icu.pri)
+
+    HEADERS += \
+        $$PWD/src/keyboardlayout.h
+
+    SOURCES += \
+        $$PWD/src/keyboardlayout.cpp
+
+    LIBS += -lX11 -lX11-xcb -lxkbcommon-x11 -lxkbcommon
 }
 
-ADD_DEPENDENCY(graphics, kernel, UnicodeConverter, kernel_network, PdfFile, XpsFile, DjVuFile, HtmlRenderer, hunspell, ooxmlsignature)
+ADD_DEPENDENCY(graphics, kernel, UnicodeConverter, kernel_network, PdfFile, XpsFile, DjVuFile, hunspell, ooxmlsignature)

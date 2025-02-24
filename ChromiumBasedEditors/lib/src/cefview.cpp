@@ -322,6 +322,7 @@ protected:
 	IOfficeDrawingFile* m_pReader;
 	std::wstring m_sPassword;
 	int m_nFileType;
+	std::wstring m_sFileWithChanges;
 
 public:
 	CAscNativePrintDocument(const std::wstring& sPassword) : IAscNativePrintDocument()
@@ -334,6 +335,12 @@ public:
 	{
 		RELEASEOBJECT(m_pReader);
 		NSDirectory::DeleteDirectory(m_sTempFolder);
+
+		if (!m_sFileWithChanges.empty())
+		{
+			NSFile::CFileBinary::Remove(m_sFileWithChanges);
+			m_sFileWithChanges = L"";
+		}
 	}
 public:
 	virtual void Draw(IRenderer* pRenderer, int nPageIndex)
@@ -369,7 +376,7 @@ public:
 		};
 	}
 
-	virtual void Open(const std::wstring& sPath, const std::wstring& sRecoveryDir)
+	virtual void Open(const std::wstring& sPath, const std::wstring& sRecoveryDir, const std::wstring& sChangesFile)
 	{
 		m_sFilePath = sPath;
 		m_sTempFolder = sRecoveryDir + L"/PrintTemp";
@@ -384,6 +391,39 @@ public:
 		case AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_PDFA:
 		{
 			((CPdfFile*)m_pReader)->SetCMapFolder(m_sCMapFolder);
+
+			if (!sChangesFile.empty())
+			{
+				std::wstring sTmpFileWithChanges = sRecoveryDir + L"/PdfFileWithChanges.bin";
+				if (NSFile::CFileBinary::Exists(sTmpFileWithChanges))
+					NSFile::CFileBinary::Remove(sTmpFileWithChanges);
+
+				if (((CPdfFile*)m_pReader)->EditPdf(sTmpFileWithChanges))
+				{
+					CConvertFromBinParams oConvertParams;
+					oConvertParams.m_sInternalMediaDirectory = m_sImagesDirectory;
+					oConvertParams.m_sMediaDirectory = oConvertParams.m_sInternalMediaDirectory;
+
+					BYTE* pChanges = NULL;
+					DWORD nChangesLen = 0;
+					if (NSFile::CFileBinary::ReadAllBytes(sChangesFile, &pChanges, nChangesLen))
+					{
+						if (nChangesLen > 4)
+							((CPdfFile*)m_pReader)->AddToPdfFromBinary(pChanges + 4, (unsigned int)(nChangesLen - 4), &oConvertParams);
+					}
+
+					RELEASEARRAYOBJECTS(pChanges);
+
+					((CPdfFile*)m_pReader)->Close();
+
+					RELEASEOBJECT(m_pReader);
+					NSDirectory::DeleteDirectory(m_sTempFolder);
+
+					m_pReader = new CPdfFile(m_pApplicationFonts);
+					Open(sTmpFileWithChanges, sRecoveryDir, L"");
+				}
+			}
+
 			break;
 		}
 		default:
@@ -779,6 +819,7 @@ public:
 	std::string m_sPrintParameters;
 
 	std::wstring m_sCloudNativePrintFile;
+	std::wstring m_sNativePrintChangesFile;
 
 	// ссылка для view
 	std::wstring m_strUrl;
@@ -819,6 +860,8 @@ public:
 	bool m_bIsCrashed;
 	// ошибка загрузки
 	bool m_bIsLoadingError;
+	// если документ не модифицирован, но закрывать без предупреждения нельзя
+	bool m_bIsLockedSave;
 
 	// поддерживается ли криптование
 	bool m_bIsOnlyPassSupport;
@@ -931,6 +974,7 @@ public:
 	std::string m_sVersionForReporter;
 
 	CTemporaryDocumentInfo* m_pTemporaryCloudFileInfo;
+	std::wstring m_sCloudRecentUrl;
 
 	CConvertFileInEditor* m_pLocalFileConverter;
 	CCloudPDFSaver* m_pCloudSaveToDrawing;
@@ -957,6 +1001,7 @@ public:
 		m_bIsDestroy = false;
 		m_bIsCrashed = false;
 		m_bIsLoadingError = false;
+		m_bIsLockedSave = false;
 
 		m_strUrl = L"";
 
@@ -1010,6 +1055,7 @@ public:
 
 		m_pLockRecover = NULL;
 		m_pTemporaryCloudFileInfo = NULL;
+		m_sCloudRecentUrl = L"";
 
 		m_pLocalFileConverter = NULL;
 		m_pCloudSaveToDrawing = NULL;
@@ -1553,6 +1599,13 @@ public:
 				arFormats.push_back(AVS_OFFICESTUDIO_FILE_IMAGE_PNG);
 				arFormats.push_back(AVS_OFFICESTUDIO_FILE_IMAGE_JPG);
 			}
+		}
+		else if (m_oLocalInfo.m_oInfo.m_nCurrentFileFormat & AVS_OFFICESTUDIO_FILE_DRAW)
+		{
+			arFormats.push_back(AVS_OFFICESTUDIO_FILE_DRAW_VSDX);
+			arFormats.push_back(AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_PDF);
+			arFormats.push_back(AVS_OFFICESTUDIO_FILE_IMAGE_PNG);
+			arFormats.push_back(AVS_OFFICESTUDIO_FILE_IMAGE_JPG);
 		}
 	}
 
@@ -2600,6 +2653,8 @@ public:
 					m_pParent->m_pInternal->m_pTemporaryCloudFileInfo = pTempInfo;
 
 					pManager->m_pInternal->Recents_Add(pTempInfo->PathSrc, pTempInfo->Type, pTempInfo->Url, pTempInfo->ExternalCloud, pTempInfo->ParentUrl);
+					m_pParent->m_pInternal->m_sCloudRecentUrl = pTempInfo->Url;
+
 					pData->put_Path(sPath);
 					pData->put_Url(sUrl);
 				}
@@ -2754,8 +2809,19 @@ public:
 			m_pParent->m_pInternal->m_sPrintParameters = args->GetString(0);
 			m_pParent->m_pInternal->m_sNativeFilePassword = args->GetString(1);
 
-			if (args->GetSize() > 2)
-				m_pParent->m_pInternal->m_sCloudNativePrintFile = args->GetString(2);
+			m_pParent->m_pInternal->m_sCloudNativePrintFile = args->GetString(2);
+			m_pParent->m_pInternal->m_sNativePrintChangesFile = args->GetString(3);
+
+			if (args->GetSize() > 4)
+			{
+				m_pParent->m_pInternal->m_oPrintData.m_sDocumentUrl = args->GetString(4).ToWString();
+				m_pParent->m_pInternal->m_oPrintData.m_sFrameUrl = args->GetString(5).ToWString();
+
+				if (!m_pParent->m_pInternal->m_oLocalInfo.m_oInfo.m_sRecoveryDir.empty())
+					m_pParent->m_pInternal->m_oPrintData.m_sDocumentUrl = m_pParent->m_pInternal->m_oLocalInfo.m_oInfo.m_sRecoveryDir + L"/";
+
+				m_pParent->m_pInternal->m_oPrintData.CalculateImagePaths(!m_pParent->m_pInternal->m_sCloudCryptSrc.empty());
+			}
 
 			m_pParent->Apply(pEvent);
 			return true;
@@ -2869,6 +2935,11 @@ public:
 			pManager->m_pInternal->Recovers_RemoveAll();
 			return true;
 		}
+		else if (message_name == "onlocaldocument_templates")
+		{
+			pManager->m_pInternal->m_oTemplatesCache.SetProps(args->GetString(0).ToWString(), args->GetInt(1));
+			return true;
+		}
 		else if (message_name == "onlocaldocument_onsavestart")
 		{
 			bool bIsNeedSave = m_pParent->m_pInternal->m_oLocalInfo.m_oInfo.m_bIsSaved ? false : true;
@@ -2880,6 +2951,16 @@ public:
 			std::wstring sOldPassword = args->GetString(5);
 
 			bool bIsSaveAs = (sParams.find("saveas=true") != std::string::npos) ? true : false;
+
+			if (!bIsNeedSave)
+			{
+				if (m_pParent->m_pInternal->m_pLocalFileLocker &&
+					m_pParent->m_pInternal->m_pLocalFileLocker->IsEmpty() &&
+					!NSFile::CFileBinary::Exists(m_pParent->m_pInternal->m_oLocalInfo.m_oInfo.m_sFileSrc))
+				{
+					bIsNeedSave = true;
+				}
+			}
 
 			// нужно ли показывать диалог?
 			// 1) файл новый/восстановленный, т.е. некуда пока сохранять
@@ -4181,8 +4262,11 @@ public:
 		Core_GetMonitorRawDpi(hwnd, &_dx, &_dy);
 		dDeviceScale = Core_GetMonitorScale(_dx, _dy);
 #else
-		int nDeviceScaleTmp = CAscApplicationManager::GetDpiChecker()->GetWidgetImplDpi(m_pParent->GetWidgetImpl(), &_dx, &_dy);
-		dDeviceScale = CAscApplicationManager::GetDpiChecker()->GetScale(_dx, _dy);
+		if (CAscApplicationManager::GetDpiChecker())
+		{
+			int nDeviceScaleTmp = CAscApplicationManager::GetDpiChecker()->GetWidgetImplDpi(m_pParent->GetWidgetImpl(), &_dx, &_dy);
+			dDeviceScale = CAscApplicationManager::GetDpiChecker()->GetScale(_dx, _dy);
+		}
 #endif
 
 		std::string sCode = "console.log(\"window [" + std::to_string(_dx) + ", " + std::to_string(_dx) + "]: " + std::to_string(dDeviceScale) + "\");";
@@ -4318,7 +4402,7 @@ public:
 		if (nFileType == AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_PDFA)
 			nFileType = AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_PDF;
 
-		std::wstring sNeedExt = oChecker.GetExtensionByType(AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_PDF);
+		std::wstring sNeedExt = oChecker.GetExtensionByType(nFileType);
 		if (!sNeedExt.empty())
 		{
 			std::wstring::size_type posOldExt = sFileName.rfind('.');
@@ -4352,7 +4436,7 @@ public:
 		pSaver->m_oPrintData.m_sFrameUrl = args->GetString(2).ToWString();
 		pSaver->m_oPrintData.m_sThemesUrl = args->GetString(3).ToWString();
 		pSaver->m_oPrintData.CalculateImagePaths(false);
-		pSaver->m_nOutputFormat = AVS_OFFICESTUDIO_FILE_CROSSPLATFORM_PDF;
+		pSaver->m_nOutputFormat = args->GetInt(7);
 		pSaver->LoadData(args->GetString(4).ToString());
 		pSaver->m_sPdfFileSrc = args->GetString(5).ToWString();
 		pSaver->m_sPdfFileSrcPassword = args->GetString(6).ToWString();
@@ -4408,6 +4492,11 @@ public:
 		pEvent->m_pData = pData;
 
 		pListener->OnEvent(pEvent);
+		return true;
+	}
+	else if ("on_file_locked_close" == message_name)
+	{
+		m_pParent->m_pInternal->m_bIsLockedSave = args->GetBool(0);
 		return true;
 	}
 
@@ -5853,17 +5942,23 @@ void CCefView_Private::LocalFile_IncrementCounter()
 				CefRefPtr<CefProcessMessage> message = CefProcessMessage::Create("onlocaldocument_additionalparams");
 				message->GetArgumentList()->SetInt(0, m_nLocalFileOpenError);
 
+				std::wstring sFileForData = L"";
+				if ((89 == m_nLocalFileOpenError) && (m_oLocalInfo.m_oInfo.m_nCurrentFileFormat == AVS_OFFICESTUDIO_FILE_SPREADSHEET_CSV))
+					sFileForData = m_oLocalInfo.m_oInfo.m_sFileSrc;
+
+				message->GetArgumentList()->SetString(1, sFileForData);
+
 				if (90 == m_nLocalFileOpenError || 91 == m_nLocalFileOpenError)
 				{
 					ICertificate* pCert = NSCertificate::CreateInstance();
 					std::string sHash = pCert->GetHash(m_oLocalInfo.m_oInfo.m_sFileSrc, OOXML_HASH_ALG_SHA256);
 					delete pCert;
 
-					message->GetArgumentList()->SetString(1, sHash);
+					message->GetArgumentList()->SetString(2, sHash);
 
 					std::wstring sDocInfo = GetFileDocInfo(m_oLocalInfo.m_oInfo.m_sFileSrc);
 					if (!sDocInfo.empty())
-						message->GetArgumentList()->SetString(2, sDocInfo);
+						message->GetArgumentList()->SetString(3, sDocInfo);
 				}
 
 				SEND_MESSAGE_TO_RENDERER_PROCESS(browser, message);
@@ -6357,6 +6452,13 @@ void CCefView::load(const std::wstring& urlInputSrc)
 		if (this->GetType() == cvwtEditor)
 		{
 			std::wstring sUrlExternal = urlInput.substr(22);
+
+			// на маке при открытии по схеме - теряется ":"
+			if (0 == sUrlExternal.find(L"https//"))
+				NSStringUtils::string_replace(sUrlExternal, L"https//", L"https://");
+			else if (0 == sUrlExternal.find(L"http//"))
+				NSStringUtils::string_replace(sUrlExternal, L"http//", L"http://");
+
 			if (NSFile::CFileBinary::Exists(sUrlExternal))
 			{
 				COfficeFileFormatChecker oChecker;
@@ -6395,6 +6497,8 @@ void CCefView::load(const std::wstring& urlInputSrc)
 								nEditorFormat = AscEditorType::etDocumentMasterOForm;
 						else if (oChecker.nFileType & AVS_OFFICESTUDIO_FILE_CROSSPLATFORM)
 								nEditorFormat = AscEditorType::etPdf;
+						else if (oChecker.nFileType & AVS_OFFICESTUDIO_FILE_DRAW)
+								nEditorFormat = AscEditorType::etDraw;
 						}
 
 						((CCefViewEditor*)this)->CreateLocalFile(nEditorFormat, sExternalName, sTmpFile);
@@ -6873,7 +6977,9 @@ void CCefView::Apply(NSEditorApi::CAscMenuEvent* pEvent)
 					NSDirectory::CreateDirectory(sTempDirRecover);
 				}
 
-				m_pInternal->m_oPrintData.m_pNativePrinter->Open(sLocalFileSrc, sTempDirRecover);
+				m_pInternal->m_oPrintData.m_pNativePrinter->m_sImagesDirectory = m_pInternal->m_oPrintData.m_sDocumentImagesPath;
+
+				m_pInternal->m_oPrintData.m_pNativePrinter->Open(sLocalFileSrc, sTempDirRecover, m_pInternal->m_sNativePrintChangesFile);
 				m_pInternal->m_oPrintData.m_pNativePrinter->Check(m_pInternal->m_oPrintData.m_arPages);
 				bIsNativePrint = true;
 			}
@@ -6964,6 +7070,9 @@ void CCefView::Apply(NSEditorApi::CAscMenuEvent* pEvent)
 						_frame->ExecuteJavaScript(sCode, _frame->GetURL(), 0);
 					}
 				}
+
+
+				RELEASEOBJECT(m_pInternal->m_pCloudSaveToDrawing);
 			}
 			else
 			{
@@ -7031,6 +7140,16 @@ void CCefView::Apply(NSEditorApi::CAscMenuEvent* pEvent)
 		NSEditorApi::CAscLocalRecentsAll* pData = (NSEditorApi::CAscLocalRecentsAll*)pEvent->m_pData;
 
 		CefRefPtr<CefProcessMessage> message = CefProcessMessage::Create("onlocaldocument_sendrecovers");
+		message->GetArgumentList()->SetString(0, pData->get_JSON());
+
+		SEND_MESSAGE_TO_RENDERER_PROCESS(browser, message);
+		break;
+	}
+	case ASC_MENU_EVENT_TYPE_CEF_LOCALFILE_TEMPLATES:
+	{
+		NSEditorApi::CAscLocalRecentsAll* pData = (NSEditorApi::CAscLocalRecentsAll*)pEvent->m_pData;
+
+		CefRefPtr<CefProcessMessage> message = CefProcessMessage::Create("onlocaldocument_sendtemplates");
 		message->GetArgumentList()->SetString(0, pData->get_JSON());
 
 		SEND_MESSAGE_TO_RENDERER_PROCESS(browser, message);
@@ -7616,6 +7735,13 @@ void CCefView::SetParentWidgetInfo(const std::wstring& json)
 	}
 }
 
+int CCefView::GetRecentId()
+{
+	if (m_pInternal->m_sCloudRecentUrl.empty())
+		return -1;
+	return m_pInternal->m_pManager->m_pInternal->Recents_GetIdByUrl(m_pInternal->m_sCloudRecentUrl);
+}
+
 CefRefPtr<CefFrame> CCefView_Private::CCloudCryptoUpload::GetFrame()
 {
 	if (!View->m_handler || !View->m_handler->GetBrowser())
@@ -7796,7 +7922,10 @@ void CCefViewEditor::OpenLocalFile(const std::wstring& sFilePath, const int& nFi
 		// Send crypto flag to recents
 		CTemporaryDocumentInfo* pTempInfo = m_pInternal->m_pTemporaryCloudFileInfo;
 		if (pTempInfo)
+		{
 			m_pInternal->m_pManager->m_pInternal->Recents_Add(pTempInfo->PathSrc, pTempInfo->Type, pTempInfo->Url, pTempInfo->ExternalCloud, pTempInfo->ParentUrl, true);
+			m_pInternal->m_sCloudRecentUrl = pTempInfo->Url;
+		}
 	}
 	else
 	{
@@ -7922,6 +8051,14 @@ void CCefViewEditor::CreateLocalFile(const AscEditorType& nFileFormatSrc, const 
 
 	// start convert file
 	this->load(sUrl + sParams);
+}
+void CCefViewEditor::CreateLocalFile(const AscEditorType& nFileFormatSrc, const int& nTemplateId, const std::wstring& sName)
+{
+	std::wstring sPath = m_pInternal->m_pManager->m_pInternal->m_oTemplatesCache.GetPath(nTemplateId);
+	if (sPath.empty())
+		return;
+
+	return CreateLocalFile(nFileFormatSrc, sName, sPath);
 }
 bool CCefViewEditor::OpenCopyAsRecoverFile(const int& nIdSrc)
 {
@@ -8143,6 +8280,10 @@ bool CCefViewEditor::IsBuilding()
 		return true;
 
 	return false;
+}
+bool CCefViewEditor::IsSaveLocked()
+{
+	return m_pInternal->m_bIsLockedSave;
 }
 
 std::wstring CCefViewEditor::GetLocalFilePath()
